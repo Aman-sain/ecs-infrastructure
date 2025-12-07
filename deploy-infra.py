@@ -37,15 +37,18 @@ class InfrastructureDeployer:
         """Create VPC or get existing"""
         self.log("Creating/Getting VPC")
 
-        # Check if exists
+        # Method 1: Check if our VPC exists by tag
         vpcs = self.ec2.describe_vpcs(Filters=[
             {'Name': 'tag:Name', 'Values': [f'{self.project}-{self.env}-vpc']}
         ])
 
         if vpcs['Vpcs']:
             vpc_id = vpcs['Vpcs'][0]['VpcId']
-            self.log(f"Found existing VPC: {vpc_id}", "✓")
-        else:
+            self.log(f"✓ Found existing VPC: {vpc_id} (by tag)", "✓")
+            return vpc_id
+
+        # Method 2: Try to create new VPC
+        try:
             vpc = self.ec2.create_vpc(CidrBlock='10.100.0.0/16')
             vpc_id = vpc['Vpc']['VpcId']
 
@@ -56,9 +59,50 @@ class InfrastructureDeployer:
             self.ec2.modify_vpc_attribute(VpcId=vpc_id, EnableDnsHostnames={'Value': True})
             self.ec2.modify_vpc_attribute(VpcId=vpc_id, EnableDnsSupport={'Value': True})
 
-            self.log(f"Created VPC: {vpc_id}", "✓")
+            self.log(f"✓ Created new VPC: {vpc_id}", "✓")
+            return vpc_id
 
-        return vpc_id
+        except ClientError as e:
+            if 'VpcLimitExceeded' in str(e):
+                self.log("⚠ VPC limit reached, looking for existing VPC...", "⚠")
+
+                # Method 3: Try to find VPC by CIDR
+                vpcs = self.ec2.describe_vpcs(Filters=[
+                    {'Name': 'cidr-block', 'Values': ['10.100.0.0/16']}
+                ])
+
+                if vpcs['Vpcs']:
+                    vpc_id = vpcs['Vpcs'][0]['VpcId']
+                    # Tag it for future use
+                    try:
+                        self.ec2.create_tags(Resources=[vpc_id], Tags=[
+                            {'Key': 'Name', 'Value': f'{self.project}-{self.env}-vpc'}
+                        ])
+                    except:
+                        pass
+                    self.log(f"✓ Using existing VPC: {vpc_id} (by CIDR 10.100.0.0/16)", "✓")
+                    return vpc_id
+
+                # Method 4: Use default VPC
+                vpcs = self.ec2.describe_vpcs(Filters=[
+                    {'Name': 'isDefault', 'Values': ['true']}
+                ])
+
+                if vpcs['Vpcs']:
+                    vpc_id = vpcs['Vpcs'][0]['VpcId']
+                    self.log(f"✓ Using default VPC: {vpc_id}", "✓")
+                    return vpc_id
+
+                # Method 5: Use any available VPC
+                vpcs = self.ec2.describe_vpcs()
+                if vpcs['Vpcs']:
+                    vpc_id = vpcs['Vpcs'][0]['VpcId']
+                    self.log(f"✓ Using available VPC: {vpc_id}", "✓")
+                    return vpc_id
+
+                raise Exception("No VPC available and cannot create new VPC (limit reached)")
+            else:
+                raise
 
     def get_or_create_igw(self, vpc_id):
         """Create Internet Gateway"""
@@ -408,9 +452,19 @@ class InfrastructureDeployer:
         return alb_arn, alb_dns, alb_zone, https_listener_arn
 
     def create_ecs_cluster(self):
-        """Create ECS cluster"""
-        self.log("Creating ECS Cluster")
+        """Create ECS cluster (like Terraform - check first)"""
+        self.log("Creating/Getting ECS Cluster")
 
+        # Check if cluster exists first
+        try:
+            clusters = self.ecs.describe_clusters(clusters=[self.cluster_name])
+            if clusters['clusters'] and clusters['clusters'][0]['status'] == 'ACTIVE':
+                self.log(f"✓ ECS Cluster already exists: {self.cluster_name}", "✓")
+                return
+        except:
+            pass
+
+        # Create if doesn't exist
         try:
             self.ecs.create_cluster(
                 clusterName=self.cluster_name,
@@ -419,28 +473,39 @@ class InfrastructureDeployer:
                     {'capacityProvider': 'FARGATE', 'weight': 1, 'base': 1}
                 ]
             )
-            self.log(f"ECS Cluster created: {self.cluster_name}", "✓")
+            self.log(f"✓ Created ECS Cluster: {self.cluster_name}", "✓")
         except ClientError as e:
             if 'ClusterAlreadyExistsException' in str(e):
-                self.log(f"ECS Cluster already exists", "✓")
+                self.log(f"✓ ECS Cluster already exists: {self.cluster_name}", "✓")
             else:
                 raise
 
     def create_ecr_repositories(self):
-        """Create ECR repositories"""
-        self.log("Creating ECR Repositories")
+        """Create ECR repositories (like Terraform - check first)"""
+        self.log("Creating/Getting ECR Repositories")
 
         for repo in ['backend', 'frontend']:
             repo_name = f'{self.project}-{repo}'
+
+            # Check if repo exists first
+            try:
+                self.ecr.describe_repositories(repositoryNames=[repo_name])
+                self.log(f"✓ ECR repo already exists: {repo_name}", "✓")
+                continue
+            except ClientError as e:
+                if 'RepositoryNotFoundException' not in str(e):
+                    raise
+
+            # Create if doesn't exist
             try:
                 self.ecr.create_repository(
                     repositoryName=repo_name,
                     imageScanningConfiguration={'scanOnPush': True}
                 )
-                self.log(f"ECR repo created: {repo_name}", "✓")
+                self.log(f"✓ Created ECR repo: {repo_name}", "✓")
             except ClientError as e:
                 if 'RepositoryAlreadyExistsException' in str(e):
-                    self.log(f"ECR repo exists: {repo_name}", "✓")
+                    self.log(f"✓ ECR repo already exists: {repo_name}", "✓")
                 else:
                     raise
 
