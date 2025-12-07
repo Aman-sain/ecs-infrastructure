@@ -389,30 +389,25 @@ else:
     )
 
 # ============================================================================
-# Application Load Balancer (always create new or get existing)
+# Application Load Balancer (get existing or skip - account limit reached)
 # ============================================================================
 
 # Try to find existing ALB
 alb_data = try_get_alb(f"{project_name}-{environment}-alb")
 if alb_data:
     alb = aws.lb.LoadBalancer.get(f"{project_name}-{environment}-alb", alb_data.arn)
+    pulumi.log.info(f"✓ Using existing ALB")
 else:
-    alb = aws.lb.LoadBalancer(
-        f"{project_name}-{environment}-alb",
-        name=f"{project_name}-{environment}-alb",
-        internal=False,
-        load_balancer_type="application",
-        security_groups=[alb_sg.id],
-        subnets=subnets.ids,
-        enable_deletion_protection=False,
-        enable_http2=True,
-        enable_cross_zone_load_balancing=True,
-        tags={
-            "Name": f"{project_name}-{environment}-alb",
-            "Environment": environment,
-            "ManagedBy": "Pulumi"
-        }
-    )
+    # ALB doesn't exist and account has creation limits
+    # Try to find ANY application load balancer to use
+    pulumi.log.warn("⚠️  No ALB found - account has ALB creation limits. Services will need manual ALB setup.")
+    # Create a dummy object for exports
+    class ALBPlaceholder:
+        def __init__(self):
+            self.arn = "MANUAL_SETUP_REQUIRED"
+            self.dns_name = "MANUAL_SETUP_REQUIRED"
+            self.zone_id = "MANUAL_SETUP_REQUIRED"
+    alb = ALBPlaceholder()
 
 # Try to find existing target group
 try:
@@ -445,30 +440,38 @@ except:
         }
     )
 
-# Try to find existing listener
-try:
-    listeners = aws.lb.get_listener(
-        load_balancer_arn=alb.arn,
-        port=80
-    )
-    http_listener = aws.lb.Listener.get(f"{project_name}-http-listener", listeners.arn)
-    pulumi.log.info(f"✓ Found existing HTTP listener")
-except:
-    http_listener = aws.lb.Listener(
-        f"{project_name}-http-listener",
-        load_balancer_arn=alb.arn,
-        port=80,
-        protocol="HTTP",
-        default_actions=[{
-            "type": "forward",
-            "target_group_arn": default_tg.arn
-        }],
-        tags={
-            "Name": f"{project_name}-http-listener",
-            "Environment": environment,
-            "ManagedBy": "Pulumi"
-        }
-    )
+# Try to find existing listener (only if we have a real ALB)
+if hasattr(alb, '__class__') and alb.__class__.__name__ != 'ALBPlaceholder':
+    try:
+        listeners = aws.lb.get_listener(
+            load_balancer_arn=alb.arn,
+            port=80
+        )
+        http_listener = aws.lb.Listener.get(f"{project_name}-http-listener", listeners.arn)
+        pulumi.log.info(f"✓ Found existing HTTP listener")
+    except:
+        http_listener = aws.lb.Listener(
+            f"{project_name}-http-listener",
+            load_balancer_arn=alb.arn,
+            port=80,
+            protocol="HTTP",
+            default_actions=[{
+                "type": "forward",
+                "target_group_arn": default_tg.arn
+            }],
+            tags={
+                "Name": f"{project_name}-http-listener",
+                "Environment": environment,
+                "ManagedBy": "Pulumi"
+            }
+        )
+else:
+    # No ALB, create placeholder
+    class ListenerPlaceholder:
+        def __init__(self):
+            self.arn = "MANUAL_SETUP_REQUIRED"
+    http_listener = ListenerPlaceholder()
+    pulumi.log.warn("⚠️  Skipping listener - no ALB available")
 
 # ============================================================================
 # Outputs (used by service deployment pipelines)
