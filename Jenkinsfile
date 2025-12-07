@@ -26,6 +26,7 @@ pipeline {
                     # Install Pulumi
                     curl -fsSL https://get.pulumi.com | sh
                     export PATH=$PATH:$HOME/.pulumi/bin
+                    export PULUMI_CONFIG_PASSPHRASE=""
 
                     # Verify installation
                     pulumi version
@@ -48,6 +49,7 @@ pipeline {
                 }
                 sh '''
                     export PATH=$PATH:$HOME/.pulumi/bin
+                    export PULUMI_CONFIG_PASSPHRASE=""
 
                     # Select or create stack
                     pulumi stack select prod --create || pulumi stack select prod
@@ -77,6 +79,7 @@ pipeline {
                 }
                 sh '''
                     export PATH=$PATH:$HOME/.pulumi/bin
+                    export PULUMI_CONFIG_PASSPHRASE=""
 
                     # Archive outputs
                     pulumi stack output --json | tee pulumi-outputs.json
