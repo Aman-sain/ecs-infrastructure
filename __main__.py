@@ -143,6 +143,17 @@ def try_get_log_group(name):
         pass
     return None
 
+def try_get_alb(name):
+    """Try to get existing ALB"""
+    try:
+        alb = aws.lb.get_load_balancer(name=name)
+        if alb.arn:
+            pulumi.log.info(f"✓ Found existing ALB: {name}")
+            return alb
+    except:
+        pass
+    return None
+
 # ============================================================================
 # Security Groups (get or create)
 # ============================================================================
@@ -382,11 +393,10 @@ else:
 # ============================================================================
 
 # Try to find existing ALB
-try:
-    albs = aws.lb.get_load_balancer(name=f"{project_name}-{environment}-alb")
-    alb = aws.lb.LoadBalancer.get(f"{project_name}-{environment}-alb", albs.arn)
-    pulumi.log.info(f"✓ Found existing ALB: {project_name}-{environment}-alb")
-except:
+alb_data = try_get_alb(f"{project_name}-{environment}-alb")
+if alb_data:
+    alb = aws.lb.LoadBalancer.get(f"{project_name}-{environment}-alb", alb_data.arn)
+else:
     alb = aws.lb.LoadBalancer(
         f"{project_name}-{environment}-alb",
         name=f"{project_name}-{environment}-alb",
