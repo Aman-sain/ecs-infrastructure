@@ -5,6 +5,7 @@ pipeline {
         AWS_REGION = 'us-east-1'
         AWS_DEFAULT_REGION = 'us-east-1'
         PULUMI_BACKEND_URL = "s3://terraform-state-ecs-autodeploy-724772079986/pulumi"
+        PULUMI_CONFIG_PASSPHRASE = ""  // Disable encryption for automation
     }
 
     options {
@@ -90,7 +91,13 @@ pipeline {
 
     post {
         always {
-            cleanWs()
+            script {
+                try {
+                    sh 'rm -rf ${WORKSPACE}/* ${WORKSPACE}/.* || true'
+                } catch (Exception e) {
+                    echo "Workspace cleanup: ${e.message}"
+                }
+            }
         }
         success {
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
