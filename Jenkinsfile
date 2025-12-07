@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
+        AWS_DEFAULT_REGION = 'us-east-1'
         PULUMI_BACKEND_URL = "s3://terraform-state-ecs-autodeploy-724772079986/pulumi"
     }
 
