@@ -217,16 +217,26 @@ else:
     )
 
 # ============================================================================
-# ECS Cluster (get or create)
+# ECS Cluster (create with opts to adopt existing)
 # ============================================================================
 
+# Check if cluster exists
 cluster_exists = try_get_ecs_cluster(f"{project_name}-{environment}-cluster")
+
 if cluster_exists:
-    # For ECS Cluster, we need the ARN format: arn:aws:ecs:region:account:cluster/name
-    # Get it from AWS directly
+    # Cluster exists - get its data for outputs but don't manage it
     cluster_data = aws.ecs.get_cluster(cluster_name=f"{project_name}-{environment}-cluster")
-    cluster = aws.ecs.Cluster.get(f"{project_name}-{environment}-cluster", cluster_data.arn)
+    pulumi.log.info(f"✓ Using existing cluster (not managing): {cluster_data.cluster_name}")
+
+    # Create a simple Output wrapper so we can export it
+    class ClusterOutput:
+        def __init__(self, name, arn):
+            self.name = name
+            self.arn = arn
+
+    cluster = ClusterOutput(cluster_data.cluster_name, cluster_data.arn)
 else:
+    # Cluster doesn't exist - create it
     cluster = aws.ecs.Cluster(
         f"{project_name}-{environment}-cluster",
         name=f"{project_name}-{environment}-cluster",
