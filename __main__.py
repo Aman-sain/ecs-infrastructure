@@ -16,56 +16,10 @@ region = "us-east-1"
 # VPC Discovery - Use existing VPC (handles AWS limits gracefully)
 # ============================================================================
 
-def get_vpc_id():
-    """Find existing VPC - tries multiple methods like Terraform would"""
-
-    # Method 1: Try to find VPC by our tag
-    try:
-        vpcs = aws.ec2.get_vpcs(
-            filters=[{"name": "tag:Name", "values": [f"{project_name}-{environment}-vpc"]}]
-        )
-        if vpcs.ids and len(vpcs.ids) > 0:
-            pulumi.log.info(f"✓ Found VPC by tag: {vpcs.ids[0]}")
-            return vpcs.ids[0]
-    except:
-        pass
-
-    # Method 2: Try CIDR block (our standard CIDR)
-    try:
-        vpcs = aws.ec2.get_vpcs(
-            filters=[{"name": "cidr-block", "values": ["10.100.0.0/16"]}]
-        )
-        if vpcs.ids and len(vpcs.ids) > 0:
-            pulumi.log.info(f"✓ Found VPC by CIDR 10.100.0.0/16: {vpcs.ids[0]}")
-            return vpcs.ids[0]
-    except:
-        pass
-
-    # Method 3: Try default VPC
-    try:
-        vpcs = aws.ec2.get_vpcs(
-            filters=[{"name": "isDefault", "values": ["true"]}]
-        )
-        if vpcs.ids and len(vpcs.ids) > 0:
-            pulumi.log.info(f"✓ Using default VPC: {vpcs.ids[0]}")
-            return vpcs.ids[0]
-    except:
-        pass
-
-    # Method 4: Get any available VPC
-    try:
-        vpcs = aws.ec2.get_vpcs()
-        if vpcs.ids and len(vpcs.ids) > 0:
-            pulumi.log.info(f"✓ Using first available VPC: {vpcs.ids[0]}")
-            return vpcs.ids[0]
-    except:
-        pass
-
-    raise Exception("❌ No VPC found! Please create a VPC first.")
-
-# Get VPC
-vpc_id = get_vpc_id()
+# Use MajorVPC directly
+vpc_id = "vpc-02d7f89b03701136a"
 vpc = aws.ec2.Vpc.get("vpc", vpc_id)
+pulumi.log.info(f"✓ Using MajorVPC: {vpc_id}")
 pulumi.export("vpc_id", vpc.id)
 
 # Get VPC subnets
