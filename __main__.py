@@ -104,7 +104,8 @@ def try_get_ecs_cluster(name):
         cluster = aws.ecs.get_cluster(cluster_name=name)
         if cluster.arn:
             pulumi.log.info(f"✓ Found existing ECS cluster: {name}")
-            return cluster.arn
+            # Return just the cluster name for .get(), not the full ARN
+            return name
     except:
         pass
     return None
@@ -219,9 +220,12 @@ else:
 # ECS Cluster (get or create)
 # ============================================================================
 
-cluster_arn = try_get_ecs_cluster(f"{project_name}-{environment}-cluster")
-if cluster_arn:
-    cluster = aws.ecs.Cluster.get(f"{project_name}-{environment}-cluster", cluster_arn)
+cluster_exists = try_get_ecs_cluster(f"{project_name}-{environment}-cluster")
+if cluster_exists:
+    # For ECS Cluster, we need the ARN format: arn:aws:ecs:region:account:cluster/name
+    # Get it from AWS directly
+    cluster_data = aws.ecs.get_cluster(cluster_name=f"{project_name}-{environment}-cluster")
+    cluster = aws.ecs.Cluster.get(f"{project_name}-{environment}-cluster", cluster_data.arn)
 else:
     cluster = aws.ecs.Cluster(
         f"{project_name}-{environment}-cluster",
