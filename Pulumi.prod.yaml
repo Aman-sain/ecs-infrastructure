@@ -1,0 +1,4 @@
+config:
+  aws:region: us-east-1
+  ecs-infrastructure:project: auto-deploy
+  ecs-infrastructure:environment: prod

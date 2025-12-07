@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        PROJECT = 'auto-deploy'
+        PULUMI_BACKEND_URL = "s3://terraform-state-ecs-autodeploy-724772079986/pulumi"
     }
 
     options {
@@ -13,17 +13,26 @@ pipeline {
     }
 
     stages {
-        stage('🔍 Validate Infrastructure') {
+        stage('🔍 Setup Pulumi') {
             steps {
                 script {
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "🔍 Validating Infrastructure Configuration"
+                    echo "🔍 Setting up Pulumi"
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 }
                 sh '''
-                    python3 --version
-                    pip3 install -q boto3 pyyaml
-                    python3 deploy-infra.py --validate || true
+                    # Install Pulumi
+                    curl -fsSL https://get.pulumi.com | sh
+                    export PATH=$PATH:$HOME/.pulumi/bin
+
+                    # Verify installation
+                    pulumi version
+
+                    # Install Python dependencies
+                    pip3 install --quiet -r requirements.txt
+
+                    # Login to S3 backend
+                    pulumi login ${PULUMI_BACKEND_URL}
                 '''
             }
         }
@@ -32,11 +41,27 @@ pipeline {
             steps {
                 script {
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "🏗️ Deploying AWS Infrastructure"
+                    echo "🏗️ Deploying Infrastructure with Pulumi"
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 }
                 sh '''
-                    python3 deploy-infra.py
+                    export PATH=$PATH:$HOME/.pulumi/bin
+
+                    # Select or create stack
+                    pulumi stack select prod --create || pulumi stack select prod
+
+                    # Preview changes
+                    echo "📋 Preview of changes:"
+                    pulumi preview --non-interactive
+
+                    # Deploy
+                    echo "🚀 Deploying infrastructure..."
+                    pulumi up --yes --non-interactive
+
+                    # Export outputs
+                    echo "📊 Infrastructure outputs:"
+                    pulumi stack output --json > infrastructure-outputs.json
+                    cat infrastructure-outputs.json
                 '''
             }
         }
@@ -49,103 +74,45 @@ pipeline {
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 }
                 sh '''
-                    # Save infrastructure outputs for service deployments
-                    if [ -f /tmp/infra-config.json ]; then
-                        cat /tmp/infra-config.json
-                        echo "✓ Infrastructure configuration saved"
-                    fi
-                '''
-            }
-        }
+                    export PATH=$PATH:$HOME/.pulumi/bin
 
-        stage('🧹 Cleanup Old Resources') {
-            steps {
-                script {
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "🧹 Cleaning Up Old Resources"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                }
-                sh '''
-                    # Cleanup old unused resources
-                    echo "Checking for unused target groups..."
-                    aws elbv2 describe-target-groups --region ${AWS_REGION} \
-                        --query "TargetGroups[?contains(TargetGroupName, 'auto-')].TargetGroupName" \
-                        --output text || true
+                    # Archive outputs
+                    pulumi stack output --json | tee pulumi-outputs.json
 
-                    echo "Checking for unused task definitions..."
-                    aws ecs list-task-definitions --region ${AWS_REGION} \
-                        --family-prefix ${PROJECT} \
-                        --status INACTIVE || true
+                    echo "✓ Infrastructure outputs saved"
                 '''
+
+                archiveArtifacts artifacts: 'pulumi-outputs.json', fingerprint: true
             }
         }
     }
 
     post {
-        success {
-            script {
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                echo "✅ INFRASTRUCTURE DEPLOYMENT SUCCESSFUL"
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-                def infraDetails = ""
-                if (fileExists('/tmp/infra-config.json')) {
-                    infraDetails = readFile('/tmp/infra-config.json')
-                }
-
-                emailext (
-                    subject: "✅ Infrastructure Deployment Successful",
-                    body: """
-                    <h2>✅ Infrastructure Deployed Successfully!</h2>
-                    <table border="1" cellpadding="10">
-                        <tr><td><b>Job</b></td><td>${env.JOB_NAME}</td></tr>
-                        <tr><td><b>Build</b></td><td>#${env.BUILD_NUMBER}</td></tr>
-                        <tr><td><b>Project</b></td><td>${env.PROJECT}</td></tr>
-                        <tr><td><b>Region</b></td><td>${env.AWS_REGION}</td></tr>
-                    </table>
-                    <h3>Resources Created:</h3>
-                    <ul>
-                        <li>VPC with public/private subnets</li>
-                        <li>ECS Fargate Cluster</li>
-                        <li>Application Load Balancer</li>
-                        <li>ECR Repositories</li>
-                        <li>IAM Roles</li>
-                        <li>CloudWatch Log Groups</li>
-                    </ul>
-                    <p><b>Configuration:</b></p>
-                    <pre>${infraDetails}</pre>
-                    <p><a href='${env.BUILD_URL}console'>View Console Output</a></p>
-                    """,
-                    to: 'vibhavhaneja2004@gmail.com',
-                    mimeType: 'text/html'
-                )
-            }
+        always {
+            cleanWs()
         }
-
+        success {
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "✅ INFRASTRUCTURE DEPLOYED SUCCESSFULLY"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        }
         failure {
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "❌ INFRASTRUCTURE DEPLOYMENT FAILED"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-            emailext (
-                subject: "❌ Infrastructure Deployment Failed",
+            emailext(
+                subject: "❌ Infrastructure Deployment Failed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """
-                <h2>❌ Infrastructure Deployment Failed</h2>
-                <table border="1" cellpadding="10">
-                    <tr><td><b>Job</b></td><td>${env.JOB_NAME}</td></tr>
-                    <tr><td><b>Build</b></td><td>#${env.BUILD_NUMBER}</td></tr>
-                    <tr><td><b>Status</b></td><td><span style="color:red">FAILED</span></td></tr>
-                </table>
-                <p>Please check the logs for details.</p>
-                <p><a href='${env.BUILD_URL}console'>View Console Output</a></p>
-                """,
-                to: 'vibhavhaneja2004@gmail.com',
-                mimeType: 'text/html'
-            )
-        }
+                    Infrastructure deployment failed!
 
-        always {
-            cleanWs(deleteDirs: true, disableDeferredWipeout: true)
+                    Job: ${env.JOB_NAME}
+                    Build: ${env.BUILD_NUMBER}
+                    URL: ${env.BUILD_URL}
+
+                    Check the console output for details.
+                """,
+                to: "vibhavhaneja2004@gmail.com"
+            )
         }
     }
 }
