@@ -4,8 +4,6 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-1'
         AWS_DEFAULT_REGION = 'us-east-1'
-        PULUMI_BACKEND_URL = "s3://terraform-state-ecs-autodeploy-724772079986/pulumi"
-        PULUMI_CONFIG_PASSPHRASE = ""  // Disable encryption for automation
     }
 
     options {
@@ -15,27 +13,18 @@ pipeline {
     }
 
     stages {
-        stage('🔍 Setup Pulumi') {
+        stage('🔍 Setup Environment') {
             steps {
                 script {
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "🔍 Setting up Pulumi"
+                    echo "🔍 Setting up Deployment Environment"
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 }
                 sh '''
-                    # Install Pulumi
-                    curl -fsSL https://get.pulumi.com | sh
-                    export PATH=$PATH:$HOME/.pulumi/bin
-                    export PULUMI_CONFIG_PASSPHRASE=""
-
-                    # Verify installation
-                    pulumi version
-
                     # Install Python dependencies
-                    pip3 install --quiet -r requirements.txt
-
-                    # Login to S3 backend
-                    pulumi login ${PULUMI_BACKEND_URL}
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    pip install boto3
                 '''
             }
         }
@@ -44,63 +33,20 @@ pipeline {
             steps {
                 script {
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "🏗️ Deploying Infrastructure with Pulumi"
+                    echo "🏗️ Deploying Infrastructure with Python"
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 }
                 sh '''
-                    export PATH=$PATH:$HOME/.pulumi/bin
-                    export PULUMI_CONFIG_PASSPHRASE=""
-
-                    # Select or create stack
-                    pulumi stack select prod --create || pulumi stack select prod
-
-                    # Preview changes
-                    echo "📋 Preview of changes:"
-                    pulumi preview --non-interactive
-
-                    # Deploy
-                    echo "🚀 Deploying infrastructure..."
-                    pulumi up --yes --non-interactive
-
-                    # Export outputs
-                    echo "📊 Infrastructure outputs:"
-                    pulumi stack output --json > infrastructure-outputs.json
-                    cat infrastructure-outputs.json
+                    . venv/bin/activate
+                    python3 deploy-infra.py
                 '''
-            }
-        }
-
-        stage('📊 Export Outputs') {
-            steps {
-                script {
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "📊 Exporting Infrastructure Outputs"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                }
-                sh '''
-                    export PATH=$PATH:$HOME/.pulumi/bin
-                    export PULUMI_CONFIG_PASSPHRASE=""
-
-                    # Archive outputs
-                    pulumi stack output --json | tee pulumi-outputs.json
-
-                    echo "✓ Infrastructure outputs saved"
-                '''
-
-                archiveArtifacts artifacts: 'pulumi-outputs.json', fingerprint: true
             }
         }
     }
 
     post {
         always {
-            script {
-                try {
-                    sh 'rm -rf ${WORKSPACE}/* ${WORKSPACE}/.* || true'
-                } catch (Exception e) {
-                    echo "Workspace cleanup: ${e.message}"
-                }
-            }
+            cleanWs()
         }
         success {
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -111,19 +57,6 @@ pipeline {
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "❌ INFRASTRUCTURE DEPLOYMENT FAILED"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            emailext(
-                subject: "❌ Infrastructure Deployment Failed - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """
-                    Infrastructure deployment failed!
-
-                    Job: ${env.JOB_NAME}
-                    Build: ${env.BUILD_NUMBER}
-                    URL: ${env.BUILD_URL}
-
-                    Check the console output for details.
-                """,
-                to: "vibhavhaneja2004@gmail.com"
-            )
         }
     }
 }
